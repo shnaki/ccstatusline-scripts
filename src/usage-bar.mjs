@@ -5,6 +5,7 @@ import { join } from 'node:path';
 const BAR_WIDTH = 10;
 const FILLED = '\u2588';
 const EMPTY = '\u2591';
+const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 
 function colorize(text, pct) {
   const code = pct >= 80 ? '31' : pct >= 50 ? '33' : '32';
@@ -39,8 +40,13 @@ async function main() {
       return;
     }
 
-    const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
-      headers: { 'Authorization': `Bearer ${token}` },
+    const res = await fetch(USAGE_URL, {
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'claude-code/2.1.71',
+        'Authorization': `Bearer ${token}`,
+        'anthropic-beta': 'oauth-2025-04-20',
+      },
       // Avoid AbortSignal.timeout here to reduce chances of libuv assertion on Windows
     });
 
