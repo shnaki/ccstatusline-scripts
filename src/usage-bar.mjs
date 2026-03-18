@@ -1,8 +1,25 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 const BAR_WIDTH = 10;
+const CACHE_PATH = join(homedir(), '.claude', 'usage-bar-cache.json');
+const CACHE_TTL_MS = (Number(process.env.USAGE_BAR_TTL_SECONDS) || 300) * 1000;
+
+async function readCache() {
+  try {
+    const raw = JSON.parse(await readFile(CACHE_PATH, 'utf8'));
+    if (Date.now() - raw.timestamp < CACHE_TTL_MS) return raw.data;
+  } catch {}
+  return null;
+}
+
+async function writeCache(data) {
+  try {
+    await writeFile(CACHE_PATH, JSON.stringify({ timestamp: Date.now(), data }));
+  } catch {}
+}
+
 const FILLED = '\u2588';
 const EMPTY = '\u2591';
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
@@ -40,29 +57,34 @@ async function main() {
       return;
     }
 
-    const res = await fetch(USAGE_URL, {
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'claude-code/2.1.71',
-        'Authorization': `Bearer ${token}`,
-        'anthropic-beta': 'oauth-2025-04-20',
-      },
-      // Avoid AbortSignal.timeout here to reduce chances of libuv assertion on Windows
-    });
+    let data = await readCache();
 
-    if (res.status === 429) {
-      const retry = res.headers.get('retry-after');
-      const msg = retry ? `[rate limited ${Math.ceil(retry / 60)}m]` : '[rate limited]';
-      process.stdout.write(msg);
-      return;
+    if (!data) {
+      const res = await fetch(USAGE_URL, {
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'claude-code/2.1.71',
+          'Authorization': `Bearer ${token}`,
+          'anthropic-beta': 'oauth-2025-04-20',
+        },
+        // Avoid AbortSignal.timeout here to reduce chances of libuv assertion on Windows
+      });
+
+      if (res.status === 429) {
+        const retry = res.headers.get('retry-after');
+        const msg = retry ? `[rate limited ${Math.ceil(retry / 60)}m]` : '[rate limited]';
+        process.stdout.write(msg);
+        return;
+      }
+
+      if (!res.ok) {
+        process.stdout.write('[API err]');
+        return;
+      }
+
+      data = await res.json();
+      await writeCache(data);
     }
-
-    if (!res.ok) {
-      process.stdout.write('[API err]');
-      return;
-    }
-
-    const data = await res.json();
     const h5 = data.five_hour;
     const d7 = data.seven_day;
 
