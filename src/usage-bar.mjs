@@ -9,7 +9,7 @@ const CACHE_TTL_MS = (Number(process.env.USAGE_BAR_TTL_SECONDS) || 300) * 1000;
 async function readCache() {
   try {
     const raw = JSON.parse(await readFile(CACHE_PATH, 'utf8'));
-    if (Date.now() - raw.timestamp < CACHE_TTL_MS) return raw.data;
+    if (Date.now() - raw.timestamp < CACHE_TTL_MS) return { data: raw.data, fetchedAt: raw.timestamp };
   } catch {}
   return null;
 }
@@ -47,6 +47,16 @@ function formatRemaining(resetAt) {
   return `${mins}m`;
 }
 
+function formatAgo(timestamp) {
+  const sec = Math.floor((Date.now() - timestamp) / 1000);
+  if (sec < 5) return 'just now';
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  return `${hr}h${min % 60}m ago`;
+}
+
 async function main() {
   try {
     const credPath = join(homedir(), '.claude', '.credentials.json');
@@ -57,9 +67,14 @@ async function main() {
       return;
     }
 
-    let data = await readCache();
+    let cached = await readCache();
+    let data;
+    let fetchedAt;
 
-    if (!data) {
+    if (cached) {
+      data = cached.data;
+      fetchedAt = cached.fetchedAt;
+    } else {
       const res = await fetch(USAGE_URL, {
         headers: {
           'Content-Type': 'application/json',
@@ -84,13 +99,16 @@ async function main() {
 
       data = await res.json();
       await writeCache(data);
+      fetchedAt = Date.now();
     }
     const h5 = data.five_hour;
     const d7 = data.seven_day;
+    const ago = formatAgo(fetchedAt);
 
     const out =
       `5h [${makeBar(h5.utilization)}] ${Math.round(h5.utilization)}% ${formatRemaining(h5.resets_at)}` +
-      ` | 7d [${makeBar(d7.utilization)}] ${Math.round(d7.utilization)}% ${formatRemaining(d7.resets_at)}`;
+      ` | 7d [${makeBar(d7.utilization)}] ${Math.round(d7.utilization)}% ${formatRemaining(d7.resets_at)}` +
+      ` (${ago})`;
 
     process.stdout.write(out);
   } catch (e) {
